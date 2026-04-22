@@ -1,99 +1,97 @@
 // ============================================================
-// VSUSTAIN SOLAR — FIELD APP
-// Main application logic
+// VSUSTAIN SOLAR — FIELD APP v2
 // ============================================================
 
-// ---- State ----
-let allProjects = [];
+// ── State ──
+let allProjects     = [];
 let filteredProjects = [];
-let activeProject = null;
-let selectedExecutionStage = null;
+let activeProject   = null;
+let selectedExecStage   = null;
 let selectedOnsiteStage = null;
-let userLocation = null;
-let activeFilter = "all";
-let searchQuery = "";
+let userLocation    = null;
+let activeFilter    = "all";
+let searchQuery     = "";
 
-// ---- Init ----
+// ── Init ──
 document.addEventListener("DOMContentLoaded", () => {
   setMonthBadge();
   requestLocation();
   loadProjects();
   bindSearch();
   bindFilters();
+
+  // Close modal on overlay click
+  document.getElementById("detailModal").addEventListener("click", (e) => {
+    if (e.target.id === "detailModal") closeModal();
+  });
 });
 
-// ---- Set Month Badge ----
-function setMonthBadge() {
-  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const now = new Date();
-  document.getElementById("monthBadge").textContent = `${months[now.getMonth()]} ${now.getFullYear()}`;
+// ────────────────────────────────────────────────
+// UTILITIES
+// ────────────────────────────────────────────────
+
+function esc(str) {
+  return String(str || "")
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;");
 }
 
-// ---- Request Location ----
+function setMonthBadge() {
+  const m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const n = new Date();
+  document.getElementById("monthBadge").textContent = `${m[n.getMonth()]} ${n.getFullYear()}`;
+}
+
+// ────────────────────────────────────────────────
+// LOCATION
+// ────────────────────────────────────────────────
+
 function requestLocation() {
-  const pill = document.getElementById("locationText");
-  if (!navigator.geolocation) {
-    pill.textContent = "Location N/A";
-    return;
-  }
+  const el = document.getElementById("locationText");
+  if (!navigator.geolocation) { el.textContent = "Location N/A"; return; }
   navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      userLocation = {
-        lat: pos.coords.latitude.toFixed(6),
-        lng: pos.coords.longitude.toFixed(6),
-        accuracy: Math.round(pos.coords.accuracy),
-      };
-      pill.textContent = `${userLocation.lat}, ${userLocation.lng}`;
+    (p) => {
+      userLocation = { lat: p.coords.latitude.toFixed(6), lng: p.coords.longitude.toFixed(6), accuracy: Math.round(p.coords.accuracy) };
+      el.textContent = `${userLocation.lat}, ${userLocation.lng}`;
     },
-    (err) => {
-      pill.textContent = "Location denied";
-      userLocation = null;
-    },
+    () => { el.textContent = "Location denied"; userLocation = null; },
     { timeout: 8000, enableHighAccuracy: true }
   );
 }
 
-// ---- Load Projects from Apps Script ----
+// ────────────────────────────────────────────────
+// LOAD PROJECTS
+// ────────────────────────────────────────────────
+
 async function loadProjects() {
-  const loading = document.getElementById("loadingState");
+  const loadEl  = document.getElementById("loadingState");
   const errorEl = document.getElementById("errorState");
-  const list = document.getElementById("projectList");
+  const list    = document.getElementById("projectList");
 
-  loading.classList.remove("hidden");
+  loadEl.classList.remove("hidden");
   errorEl.classList.add("hidden");
-
-  // Clear existing cards
-  list.querySelectorAll(".project-card").forEach(c => c.remove());
-  document.querySelector(".empty-state")?.remove();
+  list.querySelectorAll(".project-card, .empty-state").forEach(e => e.remove());
 
   try {
-    // Apps Script returns JSON. We append ?action=getProjects
-    const url = CONFIG.SHEET_API_URL + "?action=getProjects";
-    const res = await fetch(url);
-
+    const res  = await fetch(CONFIG.SHEET_API_URL + "?action=getProjects");
     if (!res.ok) throw new Error("HTTP " + res.status);
-
     const json = await res.json();
+    if (!json.data || !Array.isArray(json.data)) throw new Error("Bad format");
 
-    if (!json.data || !Array.isArray(json.data)) {
-      throw new Error("Unexpected response format");
-    }
-
-    // Map rows to project objects
     allProjects = json.data.map(rowToProject).filter(p => p.recordId);
-
     renderStats();
     applyFilters();
-
   } catch (err) {
     console.error("Load error:", err);
     errorEl.classList.remove("hidden");
   } finally {
-    loading.classList.add("hidden");
+    loadEl.classList.add("hidden");
   }
 }
 
-// ---- Map Sheet Row → Project Object ----
+// ── Map sheet row array → project object ──
 function rowToProject(row) {
   const C = CONFIG.COLUMNS;
   return {
@@ -113,32 +111,35 @@ function rowToProject(row) {
     sanctionedLoad: row[C.SANCTIONED_LOAD] || "",
     totalAmount:    row[C.TOTAL_AMOUNT]    || "",
     advanceAmount:  row[C.ADVANCE_AMOUNT]  || "",
-    executionStage: row[C.EXECUTION_STAGE] || "",
+    executionStage: row[C.EXECUTION_STAGE] || "",   // last project execution stage
     projectLead:    row[C.PROJECT_LEAD]    || "",
     status:         row[C.STATUS]          || "New",
+    onsiteStage:    row[C.ONSITE_STAGE]    || "",   // last on-site execution stage
   };
 }
 
-// ---- Render Stats ----
-function renderStats() {
-  document.getElementById("totalProjects").textContent = allProjects.length;
-  document.getElementById("activeProjects").textContent =
-    allProjects.filter(p => p.status === "In Progress").length;
+// ────────────────────────────────────────────────
+// STATS
+// ────────────────────────────────────────────────
 
+function renderStats() {
+  document.getElementById("totalProjects").textContent  = allProjects.length;
+  document.getElementById("activeProjects").textContent = allProjects.filter(p => p.status === "In Progress").length;
   const today = new Date().toISOString().split("T")[0];
-  document.getElementById("todayUpdates").textContent =
-    allProjects.filter(p => p.timestamp && p.timestamp.startsWith(today)).length;
+  document.getElementById("todayUpdates").textContent   = allProjects.filter(p => p.timestamp && p.timestamp.startsWith(today)).length;
 }
 
-// ---- Search Binding ----
+// ────────────────────────────────────────────────
+// SEARCH + FILTER
+// ────────────────────────────────────────────────
+
 function bindSearch() {
-  document.getElementById("searchInput").addEventListener("input", (e) => {
+  document.getElementById("searchInput").addEventListener("input", e => {
     searchQuery = e.target.value.toLowerCase().trim();
     applyFilters();
   });
 }
 
-// ---- Filter Binding ----
 function bindFilters() {
   document.querySelectorAll(".chip").forEach(chip => {
     chip.addEventListener("click", () => {
@@ -150,34 +151,31 @@ function bindFilters() {
   });
 }
 
-// ---- Apply Search + Filter ----
 function applyFilters() {
   filteredProjects = allProjects.filter(p => {
-    const matchesFilter = activeFilter === "all" || p.status === activeFilter;
-    const matchesSearch = !searchQuery ||
+    const matchFilter = activeFilter === "all" || p.status === activeFilter;
+    const matchSearch = !searchQuery ||
       p.projectName.toLowerCase().includes(searchQuery) ||
       p.customerName.toLowerCase().includes(searchQuery) ||
       p.phone.includes(searchQuery) ||
       p.addressCity.toLowerCase().includes(searchQuery);
-    return matchesFilter && matchesSearch;
+    return matchFilter && matchSearch;
   });
-
   renderProjects();
 }
 
-// ---- Render Project Cards ----
+// ────────────────────────────────────────────────
+// RENDER PROJECT CARDS
+// ────────────────────────────────────────────────
+
 function renderProjects() {
   const list = document.getElementById("projectList");
+  list.querySelectorAll(".project-card, .empty-state").forEach(e => e.remove());
 
-  // Remove existing cards and empty state
-  list.querySelectorAll(".project-card, .empty-state").forEach(el => el.remove());
-
-  if (filteredProjects.length === 0) {
+  if (!filteredProjects.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.innerHTML = searchQuery
-      ? `<p>No projects match "${searchQuery}"</p>`
-      : "<p>No projects found for this filter.</p>";
+    empty.innerHTML = searchQuery ? `<p>No projects match "${esc(searchQuery)}"</p>` : "<p>No projects found.</p>";
     list.appendChild(empty);
     return;
   }
@@ -188,36 +186,27 @@ function renderProjects() {
   });
 }
 
-// ---- Build Card Element ----
 function buildCard(project, idx) {
   const div = document.createElement("div");
   div.className = "project-card";
   div.style.animationDelay = `${idx * 40}ms`;
 
-  const statusClass = {
-    "New": "badge-new",
-    "In Progress": "badge-active",
-    "Complete": "badge-complete",
-  }[project.status] || "badge-new";
-
-  const address = [project.addressCity, project.addressState]
-    .filter(Boolean).join(", ");
+  const badgeClass = { "New": "badge-new", "In Progress": "badge-active", "Complete": "badge-complete" }[project.status] || "badge-new";
+  const address = [project.addressCity, project.addressState].filter(Boolean).join(", ");
 
   div.innerHTML = `
     <div class="card-top">
       <div class="card-name">${esc(project.projectName)}</div>
-      <span class="card-badge ${statusClass}">${esc(project.status)}</span>
+      <span class="card-badge ${badgeClass}">${esc(project.status)}</span>
     </div>
-    <div class="card-customer">
-      <span>👤</span> ${esc(project.customerName)}
-    </div>
+    <div class="card-customer"><span>👤</span> ${esc(project.customerName)}</div>
     <div class="card-meta">
-      ${project.phone ? `<span class="card-meta-item">📞 ${esc(project.phone)}</span>` : ""}
-      ${address ? `<span class="card-meta-item">📍 ${esc(address)}</span>` : ""}
+      ${project.phone   ? `<span class="card-meta-item">📞 ${esc(project.phone)}</span>` : ""}
+      ${address         ? `<span class="card-meta-item">📍 ${esc(address)}</span>` : ""}
       ${project.projectType ? `<span class="card-meta-item">⚡ ${esc(project.projectType)}</span>` : ""}
     </div>
     <div class="card-stage">
-      <span class="stage-label">Stage</span>
+      <span class="stage-label">Exec stage</span>
       <span class="stage-value">${esc(project.executionStage || "—")}</span>
       <span class="card-arrow">›</span>
     </div>
@@ -227,80 +216,127 @@ function buildCard(project, idx) {
   return div;
 }
 
-// ---- Open Detail Modal ----
+// ────────────────────────────────────────────────
+// MODAL — OPEN / CLOSE / TAB
+// ────────────────────────────────────────────────
+
 function openModal(project) {
-  activeProject = project;
-  selectedExecutionStage = null;
+  activeProject       = project;
+  selectedExecStage   = null;
   selectedOnsiteStage = null;
 
-  // Populate header
+  // Populate info grid
   document.getElementById("modalProjectName").textContent = project.projectName;
-  document.getElementById("modalCustomer").textContent = project.customerName || "—";
-  document.getElementById("modalPhone").textContent = project.phone || "—";
-  document.getElementById("modalType").textContent = project.projectType || "—";
-  document.getElementById("modalCurrentStage").textContent = project.executionStage || "Not set";
+  document.getElementById("modalCustomer").textContent    = project.customerName || "—";
+  document.getElementById("modalPhone").textContent       = project.phone        || "—";
+  document.getElementById("modalType").textContent        = project.projectType  || "—";
+  document.getElementById("modalLead").textContent        = project.projectLead  || "—";
 
-  // Full address
-  const parts = [
-    project.addressStreet,
-    project.addressCity,
-    project.addressState,
-    project.addressZip,
-    project.addressCountry
-  ].filter(Boolean);
-  document.getElementById("modalAddress").textContent = parts.join(", ") || "—";
+  const addressParts = [project.addressStreet, project.addressCity, project.addressState, project.addressZip, project.addressCountry].filter(Boolean);
+  document.getElementById("modalAddress").textContent = addressParts.join(", ") || "—";
 
-  // Render stage options
-  renderStageOptions("execution");
-  renderStageOptions("onsite");
+  // Build both trackers and selectors
+  buildTracker("execution", project.executionStage);
+  buildTracker("onsite",    project.onsiteStage);
+  buildStageSelector("execution");
+  buildStageSelector("onsite");
 
-  // Reset to execution panel
-  showStagePanel("execution");
-
-  // Reset buttons
+  // Reset submit buttons
   document.getElementById("btnSubmitExecution").disabled = true;
-  document.getElementById("btnOpenForm").disabled = true;
+  document.getElementById("btnOpenForm").disabled        = true;
 
-  // Clear feedback
+  // Reset feedback
   const fb = document.getElementById("execFeedback");
   fb.classList.add("hidden");
   fb.classList.remove("error");
   fb.textContent = "";
 
-  // Show modal
-  const modal = document.getElementById("detailModal");
-  modal.classList.remove("hidden");
+  // Default to execution tab
+  switchTab("execution");
+
+  document.getElementById("detailModal").classList.remove("hidden");
   document.body.style.overflow = "hidden";
 }
 
-// ---- Close Modal ----
 function closeModal() {
   document.getElementById("detailModal").classList.add("hidden");
   document.body.style.overflow = "";
-  activeProject = null;
-  selectedExecutionStage = null;
+  activeProject       = null;
+  selectedExecStage   = null;
   selectedOnsiteStage = null;
 }
 
-// Close on overlay click
-document.getElementById("detailModal").addEventListener("click", (e) => {
-  if (e.target === e.currentTarget) closeModal();
-});
+function switchTab(type) {
+  document.getElementById("tabPanelExecution").classList.toggle("hidden", type !== "execution");
+  document.getElementById("tabPanelOnsite").classList.toggle("hidden",    type !== "onsite");
+  document.getElementById("tabExec").classList.toggle("active",   type === "execution");
+  document.getElementById("tabOnsite").classList.toggle("active", type === "onsite");
+}
 
-// ---- Render Stage Options ----
-function renderStageOptions(type) {
-  const stages = type === "execution"
-    ? CONFIG.EXECUTION_STAGES
-    : CONFIG.ONSITE_STAGES;
-  const containerId = type === "execution" ? "executionStageList" : "onsiteStageList";
-  const container = document.getElementById(containerId);
+// ────────────────────────────────────────────────
+// TRACKER — shows done (green) vs remaining (grey)
+// ────────────────────────────────────────────────
+
+function buildTracker(type, currentStage) {
+  const stages     = type === "execution" ? CONFIG.EXECUTION_STAGES : CONFIG.ONSITE_STAGES;
+  const containerId = type === "execution" ? "executionTracker" : "onsiteTracker";
+  const container  = document.getElementById(containerId);
+  container.innerHTML = "";
+
+  // Find index of current stage in the ordered list (case-insensitive trim)
+  const currentIdx = stages.findIndex(s => s.trim().toLowerCase() === (currentStage || "").trim().toLowerCase());
+
+  if (currentIdx === -1 && currentStage) {
+    // Stage value in sheet doesn't match known stages — show raw value
+    const note = document.createElement("p");
+    note.style.cssText = "font-size:12px;color:var(--text-secondary);padding:4px 0";
+    note.textContent = `Current: ${currentStage}`;
+    container.appendChild(note);
+  }
+
+  stages.forEach((stage, idx) => {
+    const item = document.createElement("div");
+    item.className = "tracker-item";
+
+    let badge = "";
+    if (currentIdx === -1) {
+      // No stage set yet — all grey
+    } else if (idx < currentIdx) {
+      // Before current — DONE
+      item.classList.add("done");
+      badge = `<span class="done-badge">Done</span>`;
+    } else if (idx === currentIdx) {
+      // Current stage — highlighted amber
+      item.classList.add("current");
+      badge = `<span class="current-badge">Current</span>`;
+    }
+    // idx > currentIdx → remaining, no class
+
+    item.innerHTML = `
+      <div class="tracker-item-left">
+        <div class="tracker-dot"></div>
+        <span class="tracker-name">${esc(stage)}</span>
+      </div>
+      ${badge}
+    `;
+
+    container.appendChild(item);
+  });
+}
+
+// ────────────────────────────────────────────────
+// STAGE SELECTOR (radio list for updating)
+// ────────────────────────────────────────────────
+
+function buildStageSelector(type) {
+  const stages      = type === "execution" ? CONFIG.EXECUTION_STAGES : CONFIG.ONSITE_STAGES;
+  const containerId = type === "execution" ? "executionStageList"    : "onsiteStageList";
+  const container   = document.getElementById(containerId);
   container.innerHTML = "";
 
   stages.forEach(stage => {
     const div = document.createElement("div");
     div.className = "stage-option";
-    div.dataset.stage = stage;
-    div.dataset.type = type;
 
     div.innerHTML = `
       <div class="stage-radio"></div>
@@ -312,16 +348,13 @@ function renderStageOptions(type) {
   });
 }
 
-// ---- Select Stage ----
-function selectStage(type, stage, clickedEl) {
+function selectStage(type, stage, el) {
   const containerId = type === "execution" ? "executionStageList" : "onsiteStageList";
-  document.querySelectorAll(`#${containerId} .stage-option`).forEach(el => {
-    el.classList.remove("selected");
-  });
-  clickedEl.classList.add("selected");
+  document.querySelectorAll(`#${containerId} .stage-option`).forEach(o => o.classList.remove("selected"));
+  el.classList.add("selected");
 
   if (type === "execution") {
-    selectedExecutionStage = stage;
+    selectedExecStage = stage;
     document.getElementById("btnSubmitExecution").disabled = false;
   } else {
     selectedOnsiteStage = stage;
@@ -329,95 +362,81 @@ function selectStage(type, stage, clickedEl) {
   }
 }
 
-// ---- Show Stage Panel ----
-function showStagePanel(type) {
-  document.getElementById("panelExecution").classList.toggle("hidden", type !== "execution");
-  document.getElementById("panelOnsite").classList.toggle("hidden", type !== "onsite");
-  document.getElementById("btnExecution").classList.toggle("active", type === "execution");
-  document.getElementById("btnOnsite").classList.toggle("active", type === "onsite");
-}
+// ────────────────────────────────────────────────
+// SUBMIT EXECUTION STAGE → n8n
+// n8n will update Zoho CRM AND call back Apps Script to update the sheet
+// ────────────────────────────────────────────────
 
-// ---- Submit Execution Stage → n8n ----
 async function submitExecutionStage() {
-  if (!activeProject || !selectedExecutionStage) return;
+  if (!activeProject || !selectedExecStage) return;
 
-  const btn = document.getElementById("btnSubmitExecution");
-  const feedback = document.getElementById("execFeedback");
-  const originalText = btn.textContent;
+  const btn         = document.getElementById("btnSubmitExecution");
+  const feedback    = document.getElementById("execFeedback");
+  const originalTxt = btn.textContent;
 
-  btn.disabled = true;
+  btn.disabled    = true;
   btn.textContent = "Sending...";
   feedback.classList.add("hidden");
 
   const payload = {
-    type: "execution_stage_update",
-    recordId: activeProject.recordId,
-    projectId: activeProject.projectId,
-    projectName: activeProject.projectName,
+    type:         "execution_stage_update",
+    recordId:     activeProject.recordId,
+    projectId:    activeProject.projectId,
+    projectName:  activeProject.projectName,
     customerName: activeProject.customerName,
-    phone: activeProject.phone,
-    stage: selectedExecutionStage,
-    updatedAt: new Date().toISOString(),
-    location: userLocation
+    phone:        activeProject.phone,
+    stage:        selectedExecStage,
+    updatedAt:    new Date().toISOString(),
+    location:     userLocation
       ? { lat: userLocation.lat, lng: userLocation.lng, accuracy: userLocation.accuracy }
       : null,
   };
 
   try {
     const res = await fetch(CONFIG.N8N_WEBHOOK_URL, {
-      method: "POST",
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body:    JSON.stringify(payload),
     });
-
     if (!res.ok) throw new Error("Server returned " + res.status);
 
-    // Success
-    feedback.textContent = `Stage updated to "${selectedExecutionStage}" successfully.`;
+    // Optimistically update local data
+    activeProject.executionStage = selectedExecStage;
+
+    // Refresh tracker UI immediately
+    buildTracker("execution", selectedExecStage);
+
+    feedback.textContent = `Stage updated to "${selectedExecStage}"`;
     feedback.classList.remove("hidden", "error");
 
-    // Update the local project object so card refreshes
-    activeProject.executionStage = selectedExecutionStage;
-
-    // Optionally close after delay
-    setTimeout(() => {
-      closeModal();
-      // Re-render the project list so the updated stage shows
-      renderProjects();
-    }, 1800);
+    // Close modal and re-render cards after short delay
+    setTimeout(() => { closeModal(); renderProjects(); }, 1800);
 
   } catch (err) {
-    console.error("Submit error:", err);
-    feedback.textContent = "Failed to send update. Please check your connection and try again.";
+    console.error(err);
+    feedback.textContent = "Failed to send. Check connection and try again.";
     feedback.classList.remove("hidden");
     feedback.classList.add("error");
-    btn.disabled = false;
-    btn.textContent = originalText;
+    btn.disabled    = false;
+    btn.textContent = originalTxt;
   }
 }
 
-// ---- Open Google Form (On-Site Stage) ----
+// ────────────────────────────────────────────────
+// OPEN GOOGLE FORM — On-Site Stage
+// Pre-fills: name, record ID, phone + selected onsite stage
+// ────────────────────────────────────────────────
+
 function openGoogleForm() {
   if (!activeProject || !selectedOnsiteStage) return;
 
   const params = new URLSearchParams({
-    "usp": "pp_url",
-    [CONFIG.FORM_ENTRY_NAME]:  activeProject.customerName || "",
-    [CONFIG.FORM_ENTRY_ID]:    activeProject.recordId     || "",
-    [CONFIG.FORM_ENTRY_PHONE]: activeProject.phone        || "",
+    usp: "pp_url",
+    [CONFIG.FORM_ENTRY_NAME]:         activeProject.customerName  || "",
+    [CONFIG.FORM_ENTRY_ID]:           activeProject.recordId      || "",
+    [CONFIG.FORM_ENTRY_PHONE]:        activeProject.phone         || "",
+    [CONFIG.FORM_ENTRY_ONSITE_STAGE]: selectedOnsiteStage         || "",
   });
 
-  const formUrl = `${CONFIG.GOOGLE_FORM_BASE}?${params.toString()}`;
-
-  // Open in new tab (mobile browsers will navigate)
-  window.open(formUrl, "_blank");
-}
-
-// ---- Escape HTML ----
-function esc(str) {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  window.open(`${CONFIG.GOOGLE_FORM_BASE}?${params.toString()}`, "_blank");
 }
