@@ -16,13 +16,14 @@ const CONFIG = {
   //   entry.1661817092 = Customer Name
   //   entry.117915841  = Project ID (Record ID)
   //   entry.748494691  = Phone number
+  //   entry.XXXXXXXXX  = On-Site Stage selected (ADD THIS entry ID from your form)
   GOOGLE_FORM_BASE: "https://docs.google.com/forms/d/e/1FAIpQLSeN3sWI5rEX4pYmwSYGsW55nPQ-PzGSu9MT1Ob_oAP0ukVt2w/viewform",
-  FORM_ENTRY_NAME:    "entry.1661817092",
-  FORM_ENTRY_ID:      "entry.117915841",
-  FORM_ENTRY_PHONE:   "entry.748494691",
+  FORM_ENTRY_NAME:       "entry.1661817092",
+  FORM_ENTRY_ID:         "entry.117915841",
+  FORM_ENTRY_PHONE:      "entry.748494691",
+  FORM_ENTRY_ONSITE_STAGE: "entry.82001028", // ← replace with real entry ID for onsite stage field
 
   // Sheet column mapping (0-indexed, matches your Apps Script output)
-  // Update these if you change the column order in the sheet
   COLUMNS: {
     TIMESTAMP:        0,
     RECORD_ID:        1,
@@ -40,12 +41,13 @@ const CONFIG = {
     SANCTIONED_LOAD:  13,
     TOTAL_AMOUNT:     14,
     ADVANCE_AMOUNT:   15,
-    EXECUTION_STAGE:  16,
+    EXECUTION_STAGE:  16,  // Last project execution stage (e.g. "Execution day 1")
     PROJECT_LEAD:     17,
     STATUS:           18,
+    ONSITE_STAGE:     19,  // Last on-site execution stage (e.g. "Panel mounting")
   },
 
-  // Project Execution Stages (overall project progress)
+  // Project Execution Stages — ordered list, used to determine "done" vs "remaining"
   EXECUTION_STAGES: [
     "Advance received",
     "Procurement done and Team assigned",
@@ -56,7 +58,7 @@ const CONFIG = {
     "Subsidy amount received",
   ],
 
-  // On-Site Execution Stages (physical work stages — needs photo)
+  // On-Site Execution Stages — ordered list (+ Lightning arrester added)
   ONSITE_STAGES: [
     "Material Delivered",
     "Payment 2 done",
@@ -66,6 +68,7 @@ const CONFIG = {
     "ACDB DCDB setup",
     "Inverter-UPS-Battery installation",
     "Earthing",
+    "Lightning arrester",
   ],
 
 };
