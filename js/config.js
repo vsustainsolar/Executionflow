@@ -69,6 +69,7 @@ const CONFIG = {
     "Inverter-UPS-Battery installation",
     "Earthing",
     "Lightning arrester",
+    "Commissioning",
   ],
 
 };
