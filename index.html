@@ -13,15 +13,16 @@
 
     <!-- TOP BAR -->
     <header class="topbar">
-      <div class="topbar-logo">
+      <div class="topbar-logo" id="topbarLogo">
+        <!-- Logo loaded by JS from CONFIG.LOGO_URL; fallback to mark+text -->
         <div class="logo-mark"></div>
         <span class="logo-text">VSustain</span>
       </div>
       <div class="topbar-right">
         <span class="month-badge" id="monthBadge"></span>
-        <div class="location-pill" id="locationPill">
+        <div class="location-pill">
           <span class="loc-dot"></span>
-          <span id="locationText">Getting location...</span>
+          <span id="locationText">Locating...</span>
         </div>
       </div>
     </header>
@@ -38,20 +39,23 @@
       </div>
       <div class="stat-card">
         <span class="stat-num" id="todayUpdates">—</span>
-        <span class="stat-label">Updated Today</span>
+        <span class="stat-label">Today</span>
       </div>
     </div>
 
-    <!-- SEARCH + FILTER -->
+    <!-- SEARCH -->
     <div class="controls-bar">
       <div class="search-wrap">
         <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input type="text" id="searchInput" placeholder="Search project or customer..." class="search-input" />
+        <input type="text" id="searchInput" placeholder="Search project, customer, city..." class="search-input" />
       </div>
-      <div class="filter-chips">
-        <button class="chip active" data-filter="all">All</button>
-        <button class="chip" data-filter="New">New</button>
-        <button class="chip" data-filter="In Progress">Active</button>
+
+      <!-- FILTER CHIPS — status filters + lead filters built by JS -->
+      <div class="filter-section">
+        <p class="filter-label">Status</p>
+        <div class="filter-bar" id="filterBar">
+          <!-- Built dynamically in app.js -->
+        </div>
       </div>
     </div>
 
@@ -62,7 +66,7 @@
         <p>Loading projects...</p>
       </div>
       <div class="error-state hidden" id="errorState">
-        <p>Could not load projects. Check your connection.</p>
+        <p>Could not load projects.</p>
         <button onclick="loadProjects()" class="btn-retry">Retry</button>
       </div>
     </main>
@@ -70,7 +74,7 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════════
-       PROJECT DETAIL MODAL (bottom sheet)
+       PROJECT DETAIL MODAL
        ═══════════════════════════════════════════════════ -->
   <div class="modal-overlay hidden" id="detailModal">
     <div class="modal-sheet">
@@ -87,63 +91,44 @@
         </button>
       </div>
 
-      <!-- PROJECT INFO GRID -->
+      <!-- INFO GRID -->
       <div class="info-grid">
         <div class="info-item">
           <span class="info-icon">👤</span>
-          <div>
-            <p class="info-label">Customer</p>
-            <p class="info-val" id="modalCustomer">—</p>
-          </div>
+          <div><p class="info-label">Customer</p><p class="info-val" id="modalCustomer">—</p></div>
         </div>
         <div class="info-item">
           <span class="info-icon">📞</span>
-          <div>
-            <p class="info-label">Phone</p>
-            <p class="info-val" id="modalPhone">—</p>
-          </div>
+          <div><p class="info-label">Phone</p><p class="info-val" id="modalPhone">—</p></div>
         </div>
         <div class="info-item full">
           <span class="info-icon">📍</span>
-          <div>
-            <p class="info-label">Address</p>
-            <p class="info-val" id="modalAddress">—</p>
-          </div>
+          <div><p class="info-label">Address</p><p class="info-val" id="modalAddress">—</p></div>
         </div>
         <div class="info-item">
           <span class="info-icon">⚡</span>
-          <div>
-            <p class="info-label">Type</p>
-            <p class="info-val" id="modalType">—</p>
-          </div>
+          <div><p class="info-label">Type</p><p class="info-val" id="modalType">—</p></div>
         </div>
         <div class="info-item">
           <span class="info-icon">👷</span>
-          <div>
-            <p class="info-label">Lead</p>
-            <p class="info-val" id="modalLead">—</p>
-          </div>
+          <div><p class="info-label">Lead</p><p class="info-val" id="modalLead">—</p></div>
         </div>
       </div>
 
-      <!-- TAB BAR -->
+      <!-- TABS -->
       <div class="tab-bar">
-        <button class="tab-btn active" id="tabExec" onclick="switchTab('execution')">📋 Project Stages</button>
-        <button class="tab-btn" id="tabOnsite" onclick="switchTab('onsite')">🔨 On-Site Stages</button>
+        <button class="tab-btn active" id="tabExec"   onclick="switchTab('execution')">📋 Project Stages</button>
+        <button class="tab-btn"        id="tabOnsite" onclick="switchTab('onsite')">🔨 On-Site Stages</button>
       </div>
 
       <!-- ─── TAB 1: PROJECT EXECUTION ─── -->
       <div class="tab-panel" id="tabPanelExecution">
-
         <div class="tracker-section">
           <p class="tracker-hint">Stage progress</p>
           <div class="tracker-list" id="executionTracker"></div>
         </div>
-
-        <div class="panel-divider"><span>Update to new stage</span></div>
-
+        <div class="panel-divider"><span>Update stage</span></div>
         <div class="stage-list" id="executionStageList"></div>
-
         <div class="action-row">
           <button class="btn-submit" id="btnSubmitExecution" onclick="submitExecutionStage()" disabled>
             Submit Stage Update
@@ -155,21 +140,20 @@
       <!-- ─── TAB 2: ON-SITE EXECUTION ─── -->
       <div class="tab-panel hidden" id="tabPanelOnsite">
 
-        <div class="tracker-section">
-          <p class="tracker-hint">On-site stage progress</p>
-          <div class="tracker-list" id="onsiteTracker"></div>
+        <!-- Last onsite stage info (read only) -->
+        <div class="onsite-last-stage">
+          <span class="info-icon">🔧</span>
+          <p class="onsite-last-text" id="onsiteLastStage">No on-site stages recorded yet</p>
         </div>
 
-        <div class="panel-divider"><span>Submit next on-site stage</span></div>
-
+        <div class="panel-divider"><span>Select stage to update</span></div>
         <div class="stage-list" id="onsiteStageList"></div>
-
         <div class="action-row">
           <button class="btn-submit btn-form" id="btnOpenForm" onclick="openGoogleForm()" disabled>
             Open Photo Upload Form
           </button>
         </div>
-        <p class="form-note">Opens Google Form pre-filled. Upload photo and submit.</p>
+        <p class="form-note">Opens Google Form pre-filled. Upload execution photo and submit.</p>
       </div>
 
     </div>
