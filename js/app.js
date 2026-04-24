@@ -1,43 +1,61 @@
 // ============================================================
-// VSUSTAIN SOLAR — FIELD APP v2
+// VSUSTAIN SOLAR — FIELD APP v3
+// Changes:
+//   - Logo loaded from CONFIG.LOGO_URL
+//   - Location: uses watchPosition + retries for better mobile capture
+//   - Filter chips: All / New / Active + 4 lead filters
+//   - On-site tab: no green tracker — shows checklist style with timestamp
+//   - On-site submit sends POST to n8n with stage + location
+//   - Execution stage tracker unchanged (green done logic)
 // ============================================================
 
 // ── State ──
-let allProjects     = [];
+let allProjects      = [];
 let filteredProjects = [];
-let activeProject   = null;
-let selectedExecStage   = null;
-let selectedOnsiteStage = null;
-let userLocation    = null;
-let activeFilter    = "all";
-let searchQuery     = "";
+let activeProject    = null;
+let selectedExecStage    = null;
+let selectedOnsiteStage  = null;
+let userLocation     = null;
+let locationWatcher  = null;
+let activeFilter     = "all";
+let activeLeadFilter = "all";
+let searchQuery      = "";
 
 // ── Init ──
 document.addEventListener("DOMContentLoaded", () => {
+  loadLogo();
   setMonthBadge();
-  requestLocation();
+  startLocationWatch();
   loadProjects();
   bindSearch();
-  bindFilters();
+  buildFilterChips();
 
-  // Close modal on overlay click
-  document.getElementById("detailModal").addEventListener("click", (e) => {
+  document.getElementById("detailModal").addEventListener("click", e => {
     if (e.target.id === "detailModal") closeModal();
   });
 });
 
 // ────────────────────────────────────────────────
-// UTILITIES
+// LOGO
 // ────────────────────────────────────────────────
-
-function esc(str) {
-  return String(str || "")
-    .replace(/&/g,"&amp;")
-    .replace(/</g,"&lt;")
-    .replace(/>/g,"&gt;")
-    .replace(/"/g,"&quot;");
+function loadLogo() {
+  const logoEl = document.getElementById("topbarLogo");
+  if (!logoEl) return;
+  const img = document.createElement("img");
+  img.src   = CONFIG.LOGO_URL;
+  img.alt   = "VSustain Solar";
+  img.className = "logo-img";
+  img.onerror = () => {
+    // Fallback to text if image fails
+    logoEl.innerHTML = `<div class="logo-mark"></div><span class="logo-text">VSustain</span>`;
+  };
+  logoEl.innerHTML = "";
+  logoEl.appendChild(img);
 }
 
+// ────────────────────────────────────────────────
+// MONTH BADGE
+// ────────────────────────────────────────────────
 function setMonthBadge() {
   const m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const n = new Date();
@@ -45,26 +63,46 @@ function setMonthBadge() {
 }
 
 // ────────────────────────────────────────────────
-// LOCATION
+// LOCATION — watchPosition for continuous updates
+// This ensures mobile devices with slow GPS still get a fix
 // ────────────────────────────────────────────────
-
-function requestLocation() {
+function startLocationWatch() {
   const el = document.getElementById("locationText");
-  if (!navigator.geolocation) { el.textContent = "Location N/A"; return; }
+  if (!navigator.geolocation) {
+    el.textContent = "GPS N/A";
+    return;
+  }
+
+  el.textContent = "Locating...";
+
+  // First try: immediate getCurrentPosition for quick result
   navigator.geolocation.getCurrentPosition(
-    (p) => {
-      userLocation = { lat: p.coords.latitude.toFixed(6), lng: p.coords.longitude.toFixed(6), accuracy: Math.round(p.coords.accuracy) };
-      el.textContent = `${userLocation.lat}, ${userLocation.lng}`;
-    },
-    () => { el.textContent = "Location denied"; userLocation = null; },
-    { timeout: 8000, enableHighAccuracy: true }
+    pos => applyLocation(pos),
+    err => { el.textContent = "Allow location"; },
+    { timeout: 6000, enableHighAccuracy: false, maximumAge: 30000 }
   );
+
+  // Then watch for more accurate fix
+  locationWatcher = navigator.geolocation.watchPosition(
+    pos => applyLocation(pos),
+    err => { /* silent — first call already set fallback text */ },
+    { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
+  );
+}
+
+function applyLocation(pos) {
+  userLocation = {
+    lat:      pos.coords.latitude.toFixed(6),
+    lng:      pos.coords.longitude.toFixed(6),
+    accuracy: Math.round(pos.coords.accuracy),
+  };
+  const el = document.getElementById("locationText");
+  if (el) el.textContent = `${userLocation.lat}, ${userLocation.lng}`;
 }
 
 // ────────────────────────────────────────────────
 // LOAD PROJECTS
 // ────────────────────────────────────────────────
-
 async function loadProjects() {
   const loadEl  = document.getElementById("loadingState");
   const errorEl = document.getElementById("errorState");
@@ -78,7 +116,7 @@ async function loadProjects() {
     const res  = await fetch(CONFIG.SHEET_API_URL + "?action=getProjects");
     if (!res.ok) throw new Error("HTTP " + res.status);
     const json = await res.json();
-    if (!json.data || !Array.isArray(json.data)) throw new Error("Bad format");
+    if (!json.data || !Array.isArray(json.data)) throw new Error("Bad response format");
 
     allProjects = json.data.map(rowToProject).filter(p => p.recordId);
     renderStats();
@@ -91,7 +129,6 @@ async function loadProjects() {
   }
 }
 
-// ── Map sheet row array → project object ──
 function rowToProject(row) {
   const C = CONFIG.COLUMNS;
   return {
@@ -111,17 +148,16 @@ function rowToProject(row) {
     sanctionedLoad: row[C.SANCTIONED_LOAD] || "",
     totalAmount:    row[C.TOTAL_AMOUNT]    || "",
     advanceAmount:  row[C.ADVANCE_AMOUNT]  || "",
-    executionStage: row[C.EXECUTION_STAGE] || "",   // last project execution stage
+    executionStage: row[C.EXECUTION_STAGE] || "",
     projectLead:    row[C.PROJECT_LEAD]    || "",
     status:         row[C.STATUS]          || "New",
-    onsiteStage:    row[C.ONSITE_STAGE]    || "",   // last on-site execution stage
+    onsiteStage:    row[C.ONSITE_STAGE]    || "",
   };
 }
 
 // ────────────────────────────────────────────────
 // STATS
 // ────────────────────────────────────────────────
-
 function renderStats() {
   document.getElementById("totalProjects").textContent  = allProjects.length;
   document.getElementById("activeProjects").textContent = allProjects.filter(p => p.status === "In Progress").length;
@@ -130,9 +166,57 @@ function renderStats() {
 }
 
 // ────────────────────────────────────────────────
-// SEARCH + FILTER
+// FILTER CHIPS — built from config
 // ────────────────────────────────────────────────
+function buildFilterChips() {
+  const bar = document.getElementById("filterBar");
+  if (!bar) return;
+  bar.innerHTML = "";
 
+  // Status filters
+  const statusFilters = [
+    { label: "All",    value: "all",         type: "status" },
+    { label: "New",    value: "New",          type: "status" },
+    { label: "Active", value: "In Progress",  type: "status" },
+  ];
+
+  // Lead filters
+  const leadFilters = CONFIG.PROJECT_LEADS.map(lead => ({ label: lead, value: lead, type: "lead" }));
+
+  [...statusFilters, ...leadFilters].forEach(f => {
+    const btn = document.createElement("button");
+    btn.className = "chip" + (f.value === "all" && f.type === "status" ? " active" : "");
+    btn.textContent = f.label;
+    btn.dataset.value = f.value;
+    btn.dataset.type  = f.type;
+    btn.addEventListener("click", () => onChipClick(btn, f));
+    bar.appendChild(btn);
+  });
+}
+
+function onChipClick(btn, filter) {
+  if (filter.type === "status") {
+    // Deactivate all status chips
+    document.querySelectorAll("#filterBar .chip[data-type='status']").forEach(c => c.classList.remove("active"));
+    btn.classList.add("active");
+    activeFilter = filter.value;
+  } else {
+    // Toggle lead filter
+    const wasActive = btn.classList.contains("active");
+    document.querySelectorAll("#filterBar .chip[data-type='lead']").forEach(c => c.classList.remove("active"));
+    if (!wasActive) {
+      btn.classList.add("active");
+      activeLeadFilter = filter.value;
+    } else {
+      activeLeadFilter = "all"; // deselect
+    }
+  }
+  applyFilters();
+}
+
+// ────────────────────────────────────────────────
+// SEARCH
+// ────────────────────────────────────────────────
 function bindSearch() {
   document.getElementById("searchInput").addEventListener("input", e => {
     searchQuery = e.target.value.toLowerCase().trim();
@@ -140,26 +224,19 @@ function bindSearch() {
   });
 }
 
-function bindFilters() {
-  document.querySelectorAll(".chip").forEach(chip => {
-    chip.addEventListener("click", () => {
-      document.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
-      chip.classList.add("active");
-      activeFilter = chip.dataset.filter;
-      applyFilters();
-    });
-  });
-}
-
+// ────────────────────────────────────────────────
+// APPLY ALL FILTERS
+// ────────────────────────────────────────────────
 function applyFilters() {
   filteredProjects = allProjects.filter(p => {
-    const matchFilter = activeFilter === "all" || p.status === activeFilter;
+    const matchStatus = activeFilter === "all" || p.status === activeFilter;
+    const matchLead   = activeLeadFilter === "all" || p.projectLead === activeLeadFilter;
     const matchSearch = !searchQuery ||
       p.projectName.toLowerCase().includes(searchQuery) ||
       p.customerName.toLowerCase().includes(searchQuery) ||
       p.phone.includes(searchQuery) ||
       p.addressCity.toLowerCase().includes(searchQuery);
-    return matchFilter && matchSearch;
+    return matchStatus && matchLead && matchSearch;
   });
   renderProjects();
 }
@@ -167,7 +244,6 @@ function applyFilters() {
 // ────────────────────────────────────────────────
 // RENDER PROJECT CARDS
 // ────────────────────────────────────────────────
-
 function renderProjects() {
   const list = document.getElementById("projectList");
   list.querySelectorAll(".project-card, .empty-state").forEach(e => e.remove());
@@ -175,85 +251,77 @@ function renderProjects() {
   if (!filteredProjects.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.innerHTML = searchQuery ? `<p>No projects match "${esc(searchQuery)}"</p>` : "<p>No projects found.</p>";
+    empty.innerHTML = searchQuery
+      ? `<p>No matches for "${esc(searchQuery)}"</p>`
+      : "<p>No projects found for this filter.</p>";
     list.appendChild(empty);
     return;
   }
 
-  filteredProjects.forEach((project, idx) => {
-    const card = buildCard(project, idx);
-    list.appendChild(card);
-  });
+  filteredProjects.forEach((p, i) => list.appendChild(buildCard(p, i)));
 }
 
-function buildCard(project, idx) {
+function buildCard(p, idx) {
   const div = document.createElement("div");
   div.className = "project-card";
-  div.style.animationDelay = `${idx * 40}ms`;
+  div.style.animationDelay = `${idx * 35}ms`;
 
-  const badgeClass = { "New": "badge-new", "In Progress": "badge-active", "Complete": "badge-complete" }[project.status] || "badge-new";
-  const address = [project.addressCity, project.addressState].filter(Boolean).join(", ");
+  const badgeClass = { "New": "badge-new", "In Progress": "badge-active", "Complete": "badge-complete" }[p.status] || "badge-new";
+  const address    = [p.addressCity, p.addressState].filter(Boolean).join(", ");
 
   div.innerHTML = `
     <div class="card-top">
-      <div class="card-name">${esc(project.projectName)}</div>
-      <span class="card-badge ${badgeClass}">${esc(project.status)}</span>
+      <div class="card-name">${esc(p.projectName)}</div>
+      <span class="card-badge ${badgeClass}">${esc(p.status)}</span>
     </div>
-    <div class="card-customer"><span>👤</span> ${esc(project.customerName)}</div>
+    <div class="card-customer">👤 ${esc(p.customerName)}</div>
     <div class="card-meta">
-      ${project.phone   ? `<span class="card-meta-item">📞 ${esc(project.phone)}</span>` : ""}
-      ${address         ? `<span class="card-meta-item">📍 ${esc(address)}</span>` : ""}
-      ${project.projectType ? `<span class="card-meta-item">⚡ ${esc(project.projectType)}</span>` : ""}
+      ${p.phone       ? `<span class="card-meta-item">📞 ${esc(p.phone)}</span>` : ""}
+      ${address       ? `<span class="card-meta-item">📍 ${esc(address)}</span>` : ""}
+      ${p.projectLead ? `<span class="card-meta-item">👷 ${esc(p.projectLead)}</span>` : ""}
     </div>
     <div class="card-stage">
-      <span class="stage-label">Exec stage</span>
-      <span class="stage-value">${esc(project.executionStage || "—")}</span>
+      <span class="stage-label">Exec Stage</span>
+      <span class="stage-value">${esc(p.executionStage || "—")}</span>
       <span class="card-arrow">›</span>
     </div>
   `;
 
-  div.addEventListener("click", () => openModal(project));
+  div.addEventListener("click", () => openModal(p));
   return div;
 }
 
 // ────────────────────────────────────────────────
-// MODAL — OPEN / CLOSE / TAB
+// MODAL
 // ────────────────────────────────────────────────
-
-function openModal(project) {
-  activeProject       = project;
+function openModal(p) {
+  activeProject       = p;
   selectedExecStage   = null;
   selectedOnsiteStage = null;
 
-  // Populate info grid
-  document.getElementById("modalProjectName").textContent = project.projectName;
-  document.getElementById("modalCustomer").textContent    = project.customerName || "—";
-  document.getElementById("modalPhone").textContent       = project.phone        || "—";
-  document.getElementById("modalType").textContent        = project.projectType  || "—";
-  document.getElementById("modalLead").textContent        = project.projectLead  || "—";
+  document.getElementById("modalProjectName").textContent = p.projectName;
+  document.getElementById("modalCustomer").textContent    = p.customerName || "—";
+  document.getElementById("modalPhone").textContent       = p.phone        || "—";
+  document.getElementById("modalType").textContent        = p.projectType  || "—";
+  document.getElementById("modalLead").textContent        = p.projectLead  || "—";
 
-  const addressParts = [project.addressStreet, project.addressCity, project.addressState, project.addressZip, project.addressCountry].filter(Boolean);
-  document.getElementById("modalAddress").textContent = addressParts.join(", ") || "—";
+  const addrParts = [p.addressStreet, p.addressCity, p.addressState, p.addressZip, p.addressCountry].filter(Boolean);
+  document.getElementById("modalAddress").textContent = addrParts.join(", ") || "—";
 
-  // Build both trackers and selectors
-  buildTracker("execution", project.executionStage);
-  buildTracker("onsite",    project.onsiteStage);
-  buildStageSelector("execution");
-  buildStageSelector("onsite");
+  buildExecTracker(p.executionStage);
+  buildExecSelector();
+  buildOnsiteChecklist(p.onsiteStage);
+  buildOnsiteSelector();
 
-  // Reset submit buttons
   document.getElementById("btnSubmitExecution").disabled = true;
   document.getElementById("btnOpenForm").disabled        = true;
 
-  // Reset feedback
   const fb = document.getElementById("execFeedback");
   fb.classList.add("hidden");
   fb.classList.remove("error");
   fb.textContent = "";
 
-  // Default to execution tab
   switchTab("execution");
-
   document.getElementById("detailModal").classList.remove("hidden");
   document.body.style.overflow = "hidden";
 }
@@ -261,9 +329,7 @@ function openModal(project) {
 function closeModal() {
   document.getElementById("detailModal").classList.add("hidden");
   document.body.style.overflow = "";
-  activeProject       = null;
-  selectedExecStage   = null;
-  selectedOnsiteStage = null;
+  activeProject = selectedExecStage = selectedOnsiteStage = null;
 }
 
 function switchTab(type) {
@@ -274,105 +340,80 @@ function switchTab(type) {
 }
 
 // ────────────────────────────────────────────────
-// TRACKER — shows done (green) vs remaining (grey)
+// EXECUTION STAGE TRACKER — green done logic
 // ────────────────────────────────────────────────
-
-function buildTracker(type, currentStage) {
-  const stages     = type === "execution" ? CONFIG.EXECUTION_STAGES : CONFIG.ONSITE_STAGES;
-  const containerId = type === "execution" ? "executionTracker" : "onsiteTracker";
-  const container  = document.getElementById(containerId);
+function buildExecTracker(currentStage) {
+  const container = document.getElementById("executionTracker");
   container.innerHTML = "";
-
-  // Find index of current stage in the ordered list (case-insensitive trim)
+  const stages     = CONFIG.EXECUTION_STAGES;
   const currentIdx = stages.findIndex(s => s.trim().toLowerCase() === (currentStage || "").trim().toLowerCase());
-
-  if (currentIdx === -1 && currentStage) {
-    // Stage value in sheet doesn't match known stages — show raw value
-    const note = document.createElement("p");
-    note.style.cssText = "font-size:12px;color:var(--text-secondary);padding:4px 0";
-    note.textContent = `Current: ${currentStage}`;
-    container.appendChild(note);
-  }
 
   stages.forEach((stage, idx) => {
     const item = document.createElement("div");
     item.className = "tracker-item";
-
     let badge = "";
-    if (currentIdx === -1) {
-      // No stage set yet — all grey
-    } else if (idx < currentIdx) {
-      // Before current — DONE
-      item.classList.add("done");
-      badge = `<span class="done-badge">Done</span>`;
-    } else if (idx === currentIdx) {
-      // Current stage — highlighted amber
-      item.classList.add("current");
-      badge = `<span class="current-badge">Current</span>`;
+    if (currentIdx >= 0) {
+      if (idx < currentIdx)      { item.classList.add("done");    badge = `<span class="done-badge">Done</span>`; }
+      else if (idx === currentIdx){ item.classList.add("current"); badge = `<span class="current-badge">Current</span>`; }
     }
-    // idx > currentIdx → remaining, no class
-
-    item.innerHTML = `
-      <div class="tracker-item-left">
-        <div class="tracker-dot"></div>
-        <span class="tracker-name">${esc(stage)}</span>
-      </div>
-      ${badge}
-    `;
-
+    item.innerHTML = `<div class="tracker-item-left"><div class="tracker-dot"></div><span class="tracker-name">${esc(stage)}</span></div>${badge}`;
     container.appendChild(item);
   });
 }
 
-// ────────────────────────────────────────────────
-// STAGE SELECTOR (radio list for updating)
-// ────────────────────────────────────────────────
-
-function buildStageSelector(type) {
-  const stages      = type === "execution" ? CONFIG.EXECUTION_STAGES : CONFIG.ONSITE_STAGES;
-  const containerId = type === "execution" ? "executionStageList"    : "onsiteStageList";
-  const container   = document.getElementById(containerId);
+function buildExecSelector() {
+  const container = document.getElementById("executionStageList");
   container.innerHTML = "";
-
-  stages.forEach(stage => {
+  CONFIG.EXECUTION_STAGES.forEach(stage => {
     const div = document.createElement("div");
     div.className = "stage-option";
-
-    div.innerHTML = `
-      <div class="stage-radio"></div>
-      <span class="stage-text">${esc(stage)}</span>
-    `;
-
-    div.addEventListener("click", () => selectStage(type, stage, div));
+    div.innerHTML = `<div class="stage-radio"></div><span class="stage-text">${esc(stage)}</span>`;
+    div.addEventListener("click", () => {
+      container.querySelectorAll(".stage-option").forEach(o => o.classList.remove("selected"));
+      div.classList.add("selected");
+      selectedExecStage = stage;
+      document.getElementById("btnSubmitExecution").disabled = false;
+    });
     container.appendChild(div);
   });
 }
 
-function selectStage(type, stage, el) {
-  const containerId = type === "execution" ? "executionStageList" : "onsiteStageList";
-  document.querySelectorAll(`#${containerId} .stage-option`).forEach(o => o.classList.remove("selected"));
-  el.classList.add("selected");
+// ────────────────────────────────────────────────
+// ON-SITE CHECKLIST — simple list, no green tracker
+// Shows last completed stage from sheet as info only
+// ────────────────────────────────────────────────
+function buildOnsiteChecklist(lastStage) {
+  const container = document.getElementById("onsiteLastStage");
+  if (!container) return;
+  container.textContent = lastStage ? `Last updated: ${lastStage}` : "No on-site stages recorded yet";
+}
 
-  if (type === "execution") {
-    selectedExecStage = stage;
-    document.getElementById("btnSubmitExecution").disabled = false;
-  } else {
-    selectedOnsiteStage = stage;
-    document.getElementById("btnOpenForm").disabled = false;
-  }
+function buildOnsiteSelector() {
+  const container = document.getElementById("onsiteStageList");
+  container.innerHTML = "";
+  CONFIG.ONSITE_STAGES.forEach(stage => {
+    const div = document.createElement("div");
+    div.className = "stage-option";
+    div.innerHTML = `<div class="stage-radio"></div><span class="stage-text">${esc(stage)}</span>`;
+    div.addEventListener("click", () => {
+      container.querySelectorAll(".stage-option").forEach(o => o.classList.remove("selected"));
+      div.classList.add("selected");
+      selectedOnsiteStage = stage;
+      document.getElementById("btnOpenForm").disabled = false;
+    });
+    container.appendChild(div);
+  });
 }
 
 // ────────────────────────────────────────────────
 // SUBMIT EXECUTION STAGE → n8n
-// n8n will update Zoho CRM AND call back Apps Script to update the sheet
 // ────────────────────────────────────────────────
-
 async function submitExecutionStage() {
   if (!activeProject || !selectedExecStage) return;
 
-  const btn         = document.getElementById("btnSubmitExecution");
-  const feedback    = document.getElementById("execFeedback");
-  const originalTxt = btn.textContent;
+  const btn      = document.getElementById("btnSubmitExecution");
+  const feedback = document.getElementById("execFeedback");
+  const orig     = btn.textContent;
 
   btn.disabled    = true;
   btn.textContent = "Sending...";
@@ -385,6 +426,7 @@ async function submitExecutionStage() {
     projectName:  activeProject.projectName,
     customerName: activeProject.customerName,
     phone:        activeProject.phone,
+    projectLead:  activeProject.projectLead,
     stage:        selectedExecStage,
     updatedAt:    new Date().toISOString(),
     location:     userLocation
@@ -400,43 +442,85 @@ async function submitExecutionStage() {
     });
     if (!res.ok) throw new Error("Server returned " + res.status);
 
-    // Optimistically update local data
     activeProject.executionStage = selectedExecStage;
+    buildExecTracker(selectedExecStage);
 
-    // Refresh tracker UI immediately
-    buildTracker("execution", selectedExecStage);
-
-    feedback.textContent = `Stage updated to "${selectedExecStage}"`;
+    feedback.textContent = `✓ Stage updated to "${selectedExecStage}"`;
     feedback.classList.remove("hidden", "error");
 
-    // Close modal and re-render cards after short delay
     setTimeout(() => { closeModal(); renderProjects(); }, 1800);
 
   } catch (err) {
     console.error(err);
-    feedback.textContent = "Failed to send. Check connection and try again.";
+    feedback.textContent = "Failed to send. Check connection and retry.";
     feedback.classList.remove("hidden");
     feedback.classList.add("error");
     btn.disabled    = false;
-    btn.textContent = originalTxt;
+    btn.textContent = orig;
   }
 }
 
 // ────────────────────────────────────────────────
-// OPEN GOOGLE FORM — On-Site Stage
-// Pre-fills: name, record ID, phone + selected onsite stage
+// OPEN GOOGLE FORM — On-Site Stage (pre-filled)
+// Also sends location to n8n before opening form
 // ────────────────────────────────────────────────
-
-function openGoogleForm() {
+async function openGoogleForm() {
   if (!activeProject || !selectedOnsiteStage) return;
 
+  const btn  = document.getElementById("btnOpenForm");
+  const orig = btn.textContent;
+  btn.disabled    = true;
+  btn.textContent = "Opening...";
+
+  // Send the onsite stage + location to n8n
+  const payload = {
+    type:           "onsite_stage_update",
+    recordId:       activeProject.recordId,
+    projectId:      activeProject.projectId,
+    projectName:    activeProject.projectName,
+    customerName:   activeProject.customerName,
+    phone:          activeProject.phone,
+    projectLead:    activeProject.projectLead,
+    onsiteStage:    selectedOnsiteStage,
+    updatedAt:      new Date().toISOString(),
+    location:       userLocation
+      ? { lat: userLocation.lat, lng: userLocation.lng, accuracy: userLocation.accuracy }
+      : null,
+  };
+
+  try {
+    await fetch(CONFIG.N8N_WEBHOOK_URL, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(payload),
+    });
+  } catch (e) {
+    // Don't block form opening if n8n call fails
+    console.warn("n8n call failed, continuing to form:", e);
+  }
+
+  // Build pre-filled form URL
   const params = new URLSearchParams({
     usp: "pp_url",
-    [CONFIG.FORM_ENTRY_NAME]:         activeProject.customerName  || "",
-    [CONFIG.FORM_ENTRY_ID]:           activeProject.recordId      || "",
-    [CONFIG.FORM_ENTRY_PHONE]:        activeProject.phone         || "",
-    [CONFIG.FORM_ENTRY_ONSITE_STAGE]: selectedOnsiteStage         || "",
+    [CONFIG.FORM_ENTRY_NAME]:         activeProject.customerName || "",
+    [CONFIG.FORM_ENTRY_ID]:           activeProject.recordId    || "",
+    [CONFIG.FORM_ENTRY_PHONE]:        activeProject.phone       || "",
+    [CONFIG.FORM_ENTRY_ONSITE_STAGE]: selectedOnsiteStage       || "",
   });
 
   window.open(`${CONFIG.GOOGLE_FORM_BASE}?${params.toString()}`, "_blank");
+
+  btn.disabled    = false;
+  btn.textContent = orig;
+}
+
+// ────────────────────────────────────────────────
+// UTILITIES
+// ────────────────────────────────────────────────
+function esc(str) {
+  return String(str || "")
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;");
 }
