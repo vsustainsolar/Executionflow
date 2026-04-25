@@ -20,7 +20,7 @@ const CONFIG = {
   FORM_ENTRY_NAME:           "entry.1661817092",
   FORM_ENTRY_ID:             "entry.117915841",
   FORM_ENTRY_PHONE:          "entry.748494691",
-  FORM_ENTRY_ONSITE_STAGE:   "entry.XXXXXXXXX",  // ← replace after adding stage field to form
+  FORM_ENTRY_ONSITE_STAGE:   "entry.82001028",  // ← replace after adding stage field to form
 
   // VSustain logo (GitHub raw URL)
   LOGO_URL: "https://raw.githubusercontent.com/vsustainsolar/Images/b3236aab1b067ff71288482c55b1bc4f701a2879/logo%20v%20sustain.png",
